@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Landmark Recognition</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        #videoFeed {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        #facts {
+            padding: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        h2 {
+            margin-top: 0;
+        }
+        ul {
+            padding-left: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <video id="videoFeed" autoplay playsinline></video>
+        <div id="facts">
+            <h2>Landmark Facts</h2>
+            <p id="landmarkName"></p>
+            <ul id="factsList"></ul>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoFeed');
+        const landmarkName = document.getElementById('landmarkName');
+        const factsList = document.getElementById('factsList');
+        const apiKey = 'AIzaSyDmnge0f1XdxLvvBPMW1pJKe5QQmGsKTiQ';
+        let lastDetectedLandmark = '';
+        let isProcessing = false;
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                video.srcObject = stream;
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+            }
+        }
+
+        async function captureFrame() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            return canvas.toDataURL('image/jpeg').split(',')[1];
+        }
+
+        async function detectLandmark(imageData) {
+            const apiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+            const requestBody = {
+                requests: [{
+                    image: { content: imageData },
+                    features: [{ type: 'LANDMARK_DETECTION', maxResults: 1 }]
+                }]
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch data from Google Vision API');
+            }
+
+            const data = await response.json();
+            return data.responses[0].landmarkAnnotations;
+        }
+
+        async function fetchLandmarkFacts(landmarkName) {
+            const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=false&explaintext=true&titles=${encodeURIComponent(landmarkName)}&origin=*`;
+
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error('Failed to fetch landmark information');
+            }
+
+            const data = await response.json();
+            const pages = data.query.pages;
+            const pageId = Object.keys(pages)[0];
+            const page = pages[pageId];
+
+            return page.extract ? page.extract : 'No description available.';
+        }
+
+        function displayFacts(name, facts) {
+            landmarkName.textContent = name;
+            factsList.innerHTML = '';
+            const sentences = facts.split('. ').filter(s => s.trim().length > 0);
+            const topFacts = sentences.slice(0, 10).map(s => s.trim() + (s.endsWith('.') ? '' : '.'));
+            
+            topFacts.forEach(fact => {
+                const li = document.createElement('li');
+                li.textContent = fact;
+                factsList.appendChild(li);
+            });
+        }
+
+        async function processFrame() {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            try {
+                const imageData = await captureFrame();
+                const landmarks = await detectLandmark(imageData);
+
+                if (landmarks && landmarks.length > 0) {
+                    const landmark = landmarks[0];
+                    if (landmark.score >= 0.5 && landmark.description !== lastDetectedLandmark) {
+                        lastDetectedLandmark = landmark.description;
+                        const facts = await fetchLandmarkFacts(landmark.description);
+                        displayFacts(landmark.description, facts);
+                    }
+                }
+            } catch (error) {
+                console.error('Error processing frame:', error);
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        startCamera();
+        setInterval(processFrame, 5000); // Process a frame every 5 seconds
+    </script>
+</body>
+</html>
